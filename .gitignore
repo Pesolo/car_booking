@@ -1,2 +1,4 @@
 .env.dev
 venv/
+logs/
+car_firebase.json

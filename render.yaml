@@ -1,0 +1,86 @@
+services:
+  - type: web
+    name: parking-api
+    env: python3
+    plan: free
+    region: oregon  # Choose based on your location/users
+    
+    # Build configuration
+    buildCommand: |
+      pip install --upgrade pip &&
+      pip install -r requirements.txt &&
+      mkdir -p logs &&
+      mkdir -p config
+    
+    # Start command - optimized for free plan (single worker)
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 300 --keep-alive 2 --max-requests 1000 --access-logfile - --error-logfile - app:app
+    
+    # Health check
+    healthCheckPath: /health
+    
+    # Auto-deploy configuration
+    autoDeploy: true
+    
+    # Environment variables
+    envVars:
+      # Flask Configuration
+      - key: FLASK_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      
+      # JWT Configuration  
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_EXPIRATION_HOURS
+        value: 24
+      
+      # Firebase Configuration (Environment Variables Method)
+      - key: FIREBASE_DATABASE_URL
+        value: https://car-22792-default-rtdb.firebaseio.com/
+      - key: FIREBASE_PROJECT_ID
+        sync: false  # Set this manually in Render dashboard
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false  # Set this manually in Render dashboard
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false  # Set this manually in Render dashboard
+      - key: CLIENT_ID
+        sync: false  # Set this manually in Render dashboard
+      - key: PRIVATE_KEY_ID
+        sync: false  # Set this manually in Render dashboard
+
+      # Paystack Configuration
+      - key: PAYSTACK_SECRET_KEY
+        sync: false  # Set this manually in Render dashboard
+      - key: PAYSTACK_PUBLIC_KEY  
+        sync: false  # Set this manually in Render dashboard
+      
+      # Application Configuration
+      - key: DEFAULT_PARKING_RATE
+        value: 2.0
+      - key: GRACE_PERIOD_MINUTES
+        value: 10
+      - key: FRONTEND_URL
+        value: https://your-frontend-app.onrender.com
+      
+      # CORS Configuration - Mobile App Ready
+      - key: ALLOWED_ORIGINS
+        value: "https://your-frontend-app.onrender.com,http://localhost:3000,http://localhost:8081,http://10.0.2.2:3000,http://localhost:19006,capacitor://localhost,ionic://localhost"
+      - key: CORS_SUPPORTS_CREDENTIALS
+        value: "true"
+      
+      # Logging Configuration
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FILE_PATH
+        value: /tmp/app.log
+      
+      # Python Configuration
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: PYTHONUNBUFFERED
+        value: 1
