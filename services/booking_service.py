@@ -54,8 +54,8 @@ class BookingService:
             if is_available:
                 available_slots.append({
                     'slot_id': slot_id,
-                    'location': slot.get('location'),
-                    'description': slot.get('description'),
+                    'location': slot.get('location', 'Nigeria'),
+                    'description': slot.get('description', 'Unavailable'),
                     'rate_per_hour': slot.get('rate_per_hour', Config.DEFAULT_PARKING_RATE)
                 })
         
