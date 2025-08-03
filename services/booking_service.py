@@ -11,6 +11,7 @@ class BookingService:
         self.firebase = FirebaseService()
         self.bookings_ref = self.firebase.get_db_reference('bookings')
         self.slots_ref = self.firebase.get_db_reference('slots')
+
     
     def get_available_slots(self, start_time_str, end_time_str):
         """Get available parking slots for given time range"""
@@ -26,13 +27,16 @@ class BookingService:
         if start_dt < datetime.datetime.now():
             raise ValueError("Start time cannot be in the past")
         
-        # Get all slots and bookings
+        # Get all slots, bookings, and occupancy status
         all_slots = self.slots_ref.get() or {}
         all_bookings = self.bookings_ref.get() or {}
+     
         
         available_slots = []
         
+        # FIXED: Properly iterate through slots
         for slot_id, slot in all_slots.items():
+            # Check if slot is active (assumes slot data has is_active field)
             if not slot.get('is_active', True):
                 continue
                 
@@ -51,12 +55,17 @@ class BookingService:
                         is_available = False
                         break
             
+            # FIXED: Moved this inside the slot loop
             if is_available:
+                # Get current occupancy status (1 = occupied, 0 = empty)
+                            
                 available_slots.append({
                     'slot_id': slot_id,
                     'location': slot.get('location', 'Nigeria'),
                     'description': slot.get('description', 'Unavailable'),
-                    'rate_per_hour': slot.get('rate_per_hour', Config.DEFAULT_PARKING_RATE)
+                    'rate_per_hour': slot.get('rate_per_hour', Config.DEFAULT_PARKING_RATE),
+                    'current_occupancy': is_occupied,
+                    'occupancy_status': 'occupied' if is_occupied else 'empty'
                 })
         
         return available_slots
@@ -168,3 +177,5 @@ class BookingService:
         
         self.bookings_ref.child(booking_id).update(update_data)
         logger.info(f"Booking {booking_id} status updated to {status}")
+    
+  
