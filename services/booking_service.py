@@ -12,19 +12,36 @@ class BookingService:
         self.bookings_ref = self.firebase.get_db_reference('bookings')
         self.slots_ref = self.firebase.get_db_reference('slots')
 
+    def _parse_datetime_safe(self, datetime_str):
+        """Parse datetime string and handle timezone issues"""
+        try:
+            # Try parsing with fromisoformat first
+            dt = datetime.datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+            # Convert to naive UTC for consistent comparison
+            if dt.tzinfo is not None:
+                dt = dt.utctimetuple()
+                dt = datetime.datetime(*dt[:6])  # Convert to naive datetime
+            return dt
+        except ValueError:
+            # Fallback to basic parsing
+            if datetime_str.endswith('Z'):
+                datetime_str = datetime_str[:-1]  # Remove Z
+            return datetime.datetime.fromisoformat(datetime_str)
     
     def get_available_slots(self, start_time_str, end_time_str):
         """Get available parking slots for given time range"""
         try:
-            start_dt = datetime.datetime.fromisoformat(start_time_str)
-            end_dt = datetime.datetime.fromisoformat(end_time_str)
+            start_dt = self._parse_datetime_safe(start_time_str)
+            end_dt = self._parse_datetime_safe(end_time_str)
         except ValueError:
             raise ValueError("Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)")
         
         if start_dt >= end_dt:
             raise ValueError("Start time must be before end time")
         
-        if start_dt < datetime.datetime.now():
+        # Use naive UTC for comparison
+        current_time = datetime.datetime.utcnow()
+        if start_dt < current_time:
             raise ValueError("Start time cannot be in the past")
         
         # Get all slots, bookings, and occupancy status
@@ -47,8 +64,9 @@ class BookingService:
                 if (booking['slot_id'] == slot_id and 
                     booking['status'] in ['confirmed', 'in_use']):
                     
-                    booking_start = datetime.datetime.fromisoformat(booking['start_time'])
-                    booking_end = datetime.datetime.fromisoformat(booking['end_time'])
+                    # FIXED: Use safe datetime parsing for bookings too
+                    booking_start = self._parse_datetime_safe(booking['start_time'])
+                    booking_end = self._parse_datetime_safe(booking['end_time'])
                     
                     # Check for time overlap
                     if not (end_dt <= booking_start or start_dt >= booking_end):
@@ -58,6 +76,7 @@ class BookingService:
             # FIXED: Moved this inside the slot loop
             if is_available:
                 # Get current occupancy status (1 = occupied, 0 = empty)
+                #is_occupied = slot.get('current_occupancy', 0) == 1
                             
                 available_slots.append({
                     'slot_id': slot_id,
@@ -73,8 +92,8 @@ class BookingService:
     def create_booking(self, user_id, slot_id, start_time_str, end_time_str):
         """Create a new parking booking"""
         try:
-            start_dt = datetime.datetime.fromisoformat(start_time_str)
-            end_dt = datetime.datetime.fromisoformat(end_time_str)
+            start_dt = self._parse_datetime_safe(start_time_str)
+            end_dt = self._parse_datetime_safe(end_time_str)
         except ValueError:
             raise ValueError("Invalid datetime format")
         
@@ -177,5 +196,3 @@ class BookingService:
         
         self.bookings_ref.child(booking_id).update(update_data)
         logger.info(f"Booking {booking_id} status updated to {status}")
-    
-  
