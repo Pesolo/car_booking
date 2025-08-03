@@ -76,7 +76,7 @@ class BookingService:
             # FIXED: Moved this inside the slot loop
             if is_available:
                 # Get current occupancy status (1 = occupied, 0 = empty)
-                #is_occupied = slot.get('current_occupancy', 0) == 1
+                is_occupied = slot.get('current_occupancy', 0) == 1
                             
                 available_slots.append({
                     'slot_id': slot_id,
