@@ -95,7 +95,7 @@ def get_booking_qr(booking_id):
             'qr_data': qr_data,
             'qr_image': qr_image,
             'booking_reference': booking.get('booking_reference'),
-            'download_url': f'/api/bookings/{booking_id}/qr/download'
+            'download_url': f'/bookings/{booking_id}/qr/download'
         }), 200
         
     except ValueError as e:

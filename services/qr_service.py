@@ -68,10 +68,9 @@ class QRService:
         # Prepare text
         texts = [
             f"Booking: {booking_details.get('booking_reference', 'N/A')}",
-            f"Slot: {booking_details.get('slot_location', 'N/A')}",
+            f"Slot: {booking_details.get('slot_id', 'N/A')}",
             f"Start: {self._format_datetime(booking_details.get('start_time'))}",
-            f"End: {self._format_datetime(booking_details.get('end_time'))}",
-            f"Amount: ${booking_details.get('total_amount', 0):.2f}"
+            f"End: {self._format_datetime(booking_details.get('end_time'))}"
         ]
         
         # Draw text
