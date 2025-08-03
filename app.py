@@ -30,7 +30,7 @@ def create_app():
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(booking_bp, url_prefix='/booking')
-    app.register_blueprint(payment_bp, url_prefix='/payments')
+    app.register_blueprint(payment_bp, url_prefix='/payment')
     app.register_blueprint(parking_bp, url_prefix='/parking')
     
     # Register error handlers
