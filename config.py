@@ -32,7 +32,7 @@ class Config:
     PAYSTACK_BASE_URL = 'https://api.paystack.co'
     
     # Parking Configuration
-    DEFAULT_PARKING_RATE = float(os.getenv('DEFAULT_PARKING_RATE', 2.0))  # per hour
+    DEFAULT_PARKING_RATE = float(os.getenv('DEFAULT_PARKING_RATE', 100.0))  # per hour
     GRACE_PERIOD_MINUTES = int(os.getenv('GRACE_PERIOD_MINUTES', 10))
     
     # CORS Configuration - Enhanced for mobile apps
@@ -43,3 +43,6 @@ class Config:
     # Logging Configuration
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', 'logs/app.log')
+
+        # URLs
+    FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
