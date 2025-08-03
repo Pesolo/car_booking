@@ -28,10 +28,14 @@ class PaymentService:
         # Get frontend URL with fallback
         frontend_url = getattr(Config, 'FRONTEND_URL', 'http://localhost:3000')
         
+        # Generate unique reference to avoid duplicates
+        timestamp = int(datetime.now().timestamp())
+        unique_reference = f"booking_{booking_id}_{timestamp}"
+        
         payload = {
             'email': email,
             'amount': amount_kobo,
-            'reference': f"booking_{booking_id}",
+            'reference': unique_reference,
             'callback_url': f"{frontend_url}/payment/callback",
             'metadata': {
                 'booking_id': booking_id,
