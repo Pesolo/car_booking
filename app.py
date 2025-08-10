@@ -17,12 +17,15 @@ def create_app():
     # Load configuration
     app.config.from_object(Config)
     
-    # Enable CORS with specific configuration
+    # Enable CORS with specific configuration - let flask-cors handle preflight
     CORS(app, 
          origins=app.config.get('ALLOWED_ORIGINS', ['*']),
          methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Content-Type', 'Authorization'],
-         supports_credentials=app.config.get('CORS_SUPPORTS_CREDENTIALS', False))
+         allow_headers=['Content-Type', 'Authorization', 'Accept'],
+         supports_credentials=app.config.get('CORS_SUPPORTS_CREDENTIALS', False),
+         # Automatically handle OPTIONS requests
+         send_wildcard=False,
+         automatic_options=True)
     
     # Setup logging
     setup_logging(app)
@@ -49,9 +52,9 @@ def create_app():
             'service': 'parking-api',
             'version': '1.0',
             'endpoints': {
-                'auth': '/auth/login, /auth/signup, /auth/refresh',
-                'bookings': '/booking/*',
-                'payments': '/payment/*',
+                'auth': '/auth/login, /auth/signup, /auth/me',
+                'bookings': '/booking/bookings, /booking/user/bookings',
+                'payments': '/payment/initiate, /payment/verify/:reference',
                 'parking': '/parking/*',
                 'health': '/health'
             }
@@ -61,17 +64,6 @@ def create_app():
     @app.route('/health')
     def health_check():
         return {'status': 'healthy', 'service': 'parking-api'}, 200
-    
-    # Handle preflight OPTIONS requests for all routes
-    @app.before_request
-    def handle_preflight():
-        from flask import request
-        if request.method == "OPTIONS":
-            response = make_response()
-            response.headers.add("Access-Control-Allow-Origin", "*")
-            response.headers.add('Access-Control-Allow-Headers', "*")
-            response.headers.add('Access-Control-Allow-Methods', "*")
-            return response
 
     return app
 
