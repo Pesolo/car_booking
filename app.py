@@ -1,5 +1,4 @@
 from flask import Flask, request, make_response
-# from flask_cors import CORS  # REMOVE THIS LINE
 from config import Config
 from services.firebase_service import FirebaseService
 from routes.auth_routes import auth_bp
@@ -17,25 +16,35 @@ def create_app():
     # Load configuration
     app.config.from_object(Config)
     
-    # REMOVE Flask-CORS completely and use pure manual CORS
+    # ✅ UPDATED: Define allowed origins including your current frontend domain
+    ALLOWED_ORIGINS = [
+        'https://pes-park.vercel.app',        # Previous domain
+        'https://smart-carpark.vercel.app',   # ✅ ADDED: Current domain
+        'http://localhost:3000',              # Local development
+        'http://localhost:5173',              # ✅ ADDED: Vite default port
+        'http://127.0.0.1:5173',             # ✅ ADDED: Alternative local
+    ]
     
     # Manual CORS handler for ALL requests
     @app.before_request
     def handle_cors():
         origin = request.headers.get('Origin')
         
-        # Log all requests
+        # Log all requests with better formatting
         print(f"🌐 REQUEST: {request.method} {request.path} from {origin}")
         
         # Handle preflight OPTIONS requests
         if request.method == "OPTIONS":
             response = make_response()
             
-            # Allow requests from your frontend
-            if origin and origin in ['https://pes-park.vercel.app', 'http://localhost:3000']:
+            # ✅ FIXED: Check if origin is in allowed list
+            if origin and origin in ALLOWED_ORIGINS:
                 response.headers['Access-Control-Allow-Origin'] = origin
+                print(f"✅ CORS ALLOWED: {origin}")
             else:
-                response.headers['Access-Control-Allow-Origin'] = 'https://pes-park.vercel.app'
+                # Fallback to primary domain if origin not recognized
+                response.headers['Access-Control-Allow-Origin'] = 'https://smart-carpark.vercel.app'
+                print(f"⚠️ CORS FALLBACK: Unknown origin {origin}, using fallback")
                 
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
@@ -50,11 +59,18 @@ def create_app():
     def add_cors_headers(response):
         origin = request.headers.get('Origin')
         
-        # Add CORS headers to all responses
-        if origin and origin in ['https://pes-park.vercel.app', 'http://localhost:3000']:
+        # ✅ FIXED: Use updated allowed origins list
+        if origin and origin in ALLOWED_ORIGINS:
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+            print(f"✅ CORS HEADERS ADDED: {origin}")
+        else:
+            # Add default CORS for your main frontend
+            response.headers['Access-Control-Allow-Origin'] = 'https://smart-carpark.vercel.app'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+            print(f"✅ DEFAULT CORS ADDED for unknown origin: {origin}")
         
         print(f"📤 RESPONSE: {request.method} {request.path} -> {response.status}")
         return response
@@ -75,7 +91,7 @@ def create_app():
     # Register error handlers
     register_error_handlers(app)
     
-    # Root endpoint
+    # Root endpoint - Updated allowed origins info
     @app.route('/')
     def root():
         return {
@@ -84,13 +100,17 @@ def create_app():
             'service': 'parking-api',
             'version': '1.0',
             'cors': 'manual',
-            'allowed_origins': ['https://pes-park.vercel.app', 'http://localhost:3000'],
+            'allowed_origins': ALLOWED_ORIGINS,  # ✅ UPDATED: Show current allowed origins
         }, 200
     
     # Health check endpoint
     @app.route('/health')
     def health_check():
-        return {'status': 'healthy', 'service': 'parking-api'}, 200
+        return {
+            'status': 'healthy', 
+            'service': 'parking-api',
+            'allowed_origins': ALLOWED_ORIGINS  # ✅ ADDED: Show CORS info in health check
+        }, 200
 
     return app
 
