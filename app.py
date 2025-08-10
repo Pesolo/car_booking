@@ -1,5 +1,5 @@
-from flask import Flask
-from flask_cors import CORS
+from flask import Flask, request, make_response
+# from flask_cors import CORS  # REMOVE THIS LINE
 from config import Config
 from services.firebase_service import FirebaseService
 from routes.auth_routes import auth_bp
@@ -17,15 +17,47 @@ def create_app():
     # Load configuration
     app.config.from_object(Config)
     
-    # Enable CORS with specific configuration - let flask-cors handle preflight
-    CORS(app, 
-         origins=app.config.get('ALLOWED_ORIGINS', ['*']),
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Content-Type', 'Authorization', 'Accept'],
-         supports_credentials=app.config.get('CORS_SUPPORTS_CREDENTIALS', False),
-         # Automatically handle OPTIONS requests
-         send_wildcard=False,
-         automatic_options=True)
+    # REMOVE Flask-CORS completely and use pure manual CORS
+    
+    # Manual CORS handler for ALL requests
+    @app.before_request
+    def handle_cors():
+        origin = request.headers.get('Origin')
+        
+        # Log all requests
+        print(f"🌐 REQUEST: {request.method} {request.path} from {origin}")
+        
+        # Handle preflight OPTIONS requests
+        if request.method == "OPTIONS":
+            response = make_response()
+            
+            # Allow requests from your frontend
+            if origin and origin in ['https://pes-park.vercel.app', 'http://localhost:3000']:
+                response.headers['Access-Control-Allow-Origin'] = origin
+            else:
+                response.headers['Access-Control-Allow-Origin'] = 'https://pes-park.vercel.app'
+                
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+            response.headers['Access-Control-Max-Age'] = '3600'
+            response.headers['Access-Control-Allow-Credentials'] = 'false'
+            
+            print(f"✅ PREFLIGHT RESPONSE: {response.headers.get('Access-Control-Allow-Origin')}")
+            return response, 200
+    
+    # Add CORS headers to all actual responses
+    @app.after_request  
+    def add_cors_headers(response):
+        origin = request.headers.get('Origin')
+        
+        # Add CORS headers to all responses
+        if origin and origin in ['https://pes-park.vercel.app', 'http://localhost:3000']:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+        
+        print(f"📤 RESPONSE: {request.method} {request.path} -> {response.status}")
+        return response
     
     # Setup logging
     setup_logging(app)
@@ -43,7 +75,7 @@ def create_app():
     # Register error handlers
     register_error_handlers(app)
     
-    # Root endpoint for health check and basic info
+    # Root endpoint
     @app.route('/')
     def root():
         return {
@@ -51,13 +83,8 @@ def create_app():
             'status': 'healthy',
             'service': 'parking-api',
             'version': '1.0',
-            'endpoints': {
-                'auth': '/auth/login, /auth/signup, /auth/me',
-                'bookings': '/booking/bookings, /booking/user/bookings',
-                'payments': '/payment/initiate, /payment/verify/:reference',
-                'parking': '/parking/*',
-                'health': '/health'
-            }
+            'cors': 'manual',
+            'allowed_origins': ['https://pes-park.vercel.app', 'http://localhost:3000'],
         }, 200
     
     # Health check endpoint
@@ -67,7 +94,6 @@ def create_app():
 
     return app
 
-# Create the app at module level for Gunicorn
 app = create_app()
 
 if __name__ == '__main__':
