@@ -35,8 +35,8 @@ class Config:
     DEFAULT_PARKING_RATE = float(os.getenv('DEFAULT_PARKING_RATE', 100.0))  # per hour
     GRACE_PERIOD_MINUTES = int(os.getenv('GRACE_PERIOD_MINUTES', 10))
     
-    # CORS Configuration - Enhanced for mobile apps
-    ALLOWED_ORIGINS_ENV = os.getenv('ALLOWED_ORIGINS', '*')
+    # CORS Configuration - Enhanced for your Vercel frontend
+    ALLOWED_ORIGINS_ENV = os.getenv('ALLOWED_ORIGINS', 'https://pes-park.vercel.app,http://localhost:3000,http://localhost:3001')
     ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS_ENV.split(',')] if ALLOWED_ORIGINS_ENV != '*' else ['*']
     CORS_SUPPORTS_CREDENTIALS = os.getenv('CORS_SUPPORTS_CREDENTIALS', 'false').lower() == 'true'
     
@@ -44,5 +44,5 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', 'logs/app.log')
 
-        # URLs
-    FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+    # URLs
+    FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://pes-park.vercel.app')

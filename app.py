@@ -17,8 +17,12 @@ def create_app():
     # Load configuration
     app.config.from_object(Config)
     
-    # Enable CORS
-    CORS(app, origins=app.config.get('ALLOWED_ORIGINS', ['*']))
+    # Enable CORS with specific configuration
+    CORS(app, 
+         origins=app.config.get('ALLOWED_ORIGINS', ['*']),
+         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+         allow_headers=['Content-Type', 'Authorization'],
+         supports_credentials=app.config.get('CORS_SUPPORTS_CREDENTIALS', False))
     
     # Setup logging
     setup_logging(app)
@@ -36,11 +40,39 @@ def create_app():
     # Register error handlers
     register_error_handlers(app)
     
+    # Root endpoint for health check and basic info
+    @app.route('/')
+    def root():
+        return {
+            'message': 'Parking API is running',
+            'status': 'healthy',
+            'service': 'parking-api',
+            'version': '1.0',
+            'endpoints': {
+                'auth': '/auth/login, /auth/signup, /auth/refresh',
+                'bookings': '/booking/*',
+                'payments': '/payment/*',
+                'parking': '/parking/*',
+                'health': '/health'
+            }
+        }, 200
+    
     # Health check endpoint
     @app.route('/health')
     def health_check():
         return {'status': 'healthy', 'service': 'parking-api'}, 200
     
+    # Handle preflight OPTIONS requests for all routes
+    @app.before_request
+    def handle_preflight():
+        from flask import request
+        if request.method == "OPTIONS":
+            response = make_response()
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.headers.add('Access-Control-Allow-Headers', "*")
+            response.headers.add('Access-Control-Allow-Methods', "*")
+            return response
+
     return app
 
 # Create the app at module level for Gunicorn
