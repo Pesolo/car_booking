@@ -37,14 +37,14 @@ def create_app():
         if request.method == "OPTIONS":
             response = make_response()
             
-            # ✅ FIXED: Check if origin is in allowed list
+            # ✅ MODIFIED: Always allow CORS for any origin (including hardware with no origin)
             if origin and origin in ALLOWED_ORIGINS:
                 response.headers['Access-Control-Allow-Origin'] = origin
                 print(f"✅ CORS ALLOWED: {origin}")
             else:
-                # Fallback to primary domain if origin not recognized
-                response.headers['Access-Control-Allow-Origin'] = 'https://smart-carpark.vercel.app'
-                print(f"⚠️ CORS FALLBACK: Unknown origin {origin}, using fallback")
+                # ✅ CHANGED: Allow all origins (including null/no origin for hardware)
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                print(f"✅ CORS ALLOWED: All origins (hardware friendly)")
                 
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
@@ -59,18 +59,17 @@ def create_app():
     def add_cors_headers(response):
         origin = request.headers.get('Origin')
         
-        # ✅ FIXED: Use updated allowed origins list
+        # ✅ MODIFIED: Always add permissive CORS headers
         if origin and origin in ALLOWED_ORIGINS:
             response.headers['Access-Control-Allow-Origin'] = origin
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
             print(f"✅ CORS HEADERS ADDED: {origin}")
         else:
-            # Add default CORS for your main frontend
-            response.headers['Access-Control-Allow-Origin'] = 'https://smart-carpark.vercel.app'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
-            print(f"✅ DEFAULT CORS ADDED for unknown origin: {origin}")
+            # ✅ CHANGED: Allow all origins (hardware friendly)
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            print(f"✅ CORS HEADERS ADDED: All origins allowed")
+            
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
         
         print(f"📤 RESPONSE: {request.method} {request.path} -> {response.status}")
         return response
@@ -91,7 +90,7 @@ def create_app():
     # Register error handlers
     register_error_handlers(app)
     
-    # Root endpoint - Updated allowed origins info
+    # Root endpoint - Updated to show hardware support
     @app.route('/')
     def root():
         return {
@@ -99,8 +98,9 @@ def create_app():
             'status': 'healthy',
             'service': 'parking-api',
             'version': '1.0',
-            'cors': 'manual',
-            'allowed_origins': ALLOWED_ORIGINS,  # ✅ UPDATED: Show current allowed origins
+            'cors': 'permissive',  # ✅ UPDATED
+            'hardware_requests': 'allowed',  # ✅ ADDED
+            'allowed_origins': ALLOWED_ORIGINS,
         }, 200
     
     # Health check endpoint
@@ -109,7 +109,8 @@ def create_app():
         return {
             'status': 'healthy', 
             'service': 'parking-api',
-            'allowed_origins': ALLOWED_ORIGINS  # ✅ ADDED: Show CORS info in health check
+            'hardware_requests': 'allowed',  # ✅ ADDED
+            'allowed_origins': ALLOWED_ORIGINS
         }, 200
 
     return app
