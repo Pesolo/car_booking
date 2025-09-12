@@ -95,6 +95,7 @@ def get_booking_qr(booking_id):
             'qr_data': qr_data,
             'qr_image': qr_image,
             'booking_reference': booking.get('booking_reference'),
+            'booking_id': booking_id,  # Include the 10-digit booking ID
             'download_url': f'/bookings/{booking_id}/qr/download'
         }), 200
         
@@ -125,7 +126,8 @@ def download_booking_qr(booking_id):
         
         qr_data = booking.get('qr_data')
         if not qr_data:
-            return jsonify({'error': 'QR code not generated yet'}), 404
+            # Generate QR data if missing (for backward compatibility)
+            qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
         
         # Generate fresh QR code image
         qr_service = QRService()
@@ -143,9 +145,8 @@ def download_booking_qr(booking_id):
         # Create file-like object
         qr_file = io.BytesIO(qr_bytes)
         
-        # Generate filename
-        booking_ref = booking.get('booking_reference', booking_id)
-        filename = f"parking_qr_{booking_ref}.png"
+        # Generate filename using 10-digit booking ID
+        filename = f"parking_qr_{booking_id}.png"
         
         return send_file(
             qr_file,
@@ -177,12 +178,13 @@ def regenerate_booking_qr(booking_id):
         if booking['status'] != 'confirmed' and booking['status'] != 'in_use':
             return jsonify({'error': 'Cannot regenerate QR code for this booking status'}), 400
         
-        # Regenerate QR code
+        # Regenerate QR code with 10-digit booking ID
         qr_service = QRService()
         qr_data = booking.get('qr_data')
         
         if not qr_data:
-            return jsonify({'error': 'Original QR data not found'}), 404
+            # If qr_data is missing, regenerate it with the 10-digit booking ID
+            qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
         
         booking_details = {
             'booking_reference': booking.get('booking_reference'),
@@ -195,15 +197,18 @@ def regenerate_booking_qr(booking_id):
         qr_image = qr_service.generate_qr_code(qr_data, booking_details)
         qr_base64 = qr_service.qr_to_base64(qr_image)
         
-        # Update booking with new QR image
+        # Update booking with new QR image and data
         booking_service.update_booking_status(booking_id, booking['status'], {
+            'qr_data': qr_data,  # Update QR data as well
             'qr_image_base64': qr_base64,
-            'qr_regenerated_at': datetime.datetime.utcnow().isoformat()
+            'qr_regenerated_at': datetime.utcnow().isoformat()
         })
         
         return jsonify({
             'message': 'QR code regenerated successfully',
-            'qr_image': qr_base64
+            'qr_image': qr_base64,
+            'qr_data': qr_data,
+            'booking_id': booking_id
         }), 200
         
     except ValueError as e:

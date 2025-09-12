@@ -1,5 +1,6 @@
 import datetime
-from hashlib import sha256
+import random
+import string
 from services.firebase_service import FirebaseService
 from config import Config
 import logging
@@ -11,6 +12,16 @@ class BookingService:
         self.firebase = FirebaseService()
         self.bookings_ref = self.firebase.get_db_reference('bookings')
         self.slots_ref = self.firebase.get_db_reference('slots')
+
+    def _generate_booking_id(self):
+        """Generate a unique 10-digit booking ID"""
+        while True:
+            # Generate 10-digit booking ID (alphanumeric)
+            booking_id = ''.join(random.choices(string.digits + string.ascii_uppercase, k=10))
+            
+            # Ensure uniqueness by checking if it already exists
+            if not self.bookings_ref.child(booking_id).get():
+                return booking_id
 
     def _parse_datetime_safe(self, datetime_str):
         """Parse datetime string and handle timezone issues"""
@@ -123,8 +134,8 @@ class BookingService:
         rate_per_hour = slot.get('rate_per_hour', Config.DEFAULT_PARKING_RATE)
         total_amount = round(duration_hours * rate_per_hour, 2)
         
-        # Generate booking ID
-        booking_id = sha256(f'{user_id}{slot_id}{start_time_str}{datetime.datetime.now().isoformat()}'.encode()).hexdigest()
+        # Generate 10-digit booking ID
+        booking_id = self._generate_booking_id()
         
         # Create booking
         booking_data = {
@@ -137,7 +148,7 @@ class BookingService:
             'rate_per_hour': rate_per_hour,
             'duration_hours': round(duration_hours, 2),
             'created_at': datetime.datetime.utcnow().isoformat(),
-            'booking_reference': f'PK{booking_id[:8].upper()}'
+            'booking_reference': f'PK{booking_id}'  # Use the 10-digit ID for reference too
         }
         
         self.bookings_ref.child(booking_id).set(booking_data)

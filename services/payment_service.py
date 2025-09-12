@@ -28,9 +28,8 @@ class PaymentService:
         # Get frontend URL with fallback
         frontend_url = getattr(Config, 'FRONTEND_URL', 'http://localhost:3000')
         
-        # Generate unique reference to avoid duplicates
-        timestamp = int(datetime.now().timestamp())
-        unique_reference = f"booking_{booking_id}_{timestamp}"
+        # Use the 10-digit booking_id directly for payment reference
+        unique_reference = f"booking_{booking_id}"
         
         payload = {
             'email': email,
@@ -111,14 +110,14 @@ class PaymentService:
             if payment_data['status'] != 'success':
                 raise Exception("Payment was not successful")
             
-            # After successful payment verification, generate QR code
+            # After successful payment verification, generate QR code with 10-digit booking ID
             if payment_data['status'] == 'success':
                 # Get payment record
                 payment_record = self.payments_ref.child(reference).get()
                 if not payment_record:
                     raise Exception("Payment record not found")
                 
-                booking_id = payment_record['booking_id']
+                booking_id = payment_record['booking_id']  # This is now a 10-digit ID
                 
                 # Get booking details for QR code
                 booking = self.booking_service.get_booking_by_id(booking_id)
@@ -130,7 +129,7 @@ class PaymentService:
                     'paystack_data': payment_data
                 })
                 
-                # Generate QR code data and image
+                # Generate QR code data with 10-digit booking ID
                 qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
                 
                 # Generate QR code image
@@ -216,7 +215,9 @@ class PaymentService:
         if not overtime_info['overtime_required']:
             raise ValueError('No overtime payment required')
         
-        # Similar to initiate_payment but for overtime
+        # Use 10-digit booking ID for overtime payment reference
+        reference = f"overtime_{booking_id}"
+        
         amount_kobo = int(overtime_info['amount'] * 100)
         
         # Get frontend URL with fallback
@@ -225,7 +226,7 @@ class PaymentService:
         payload = {
             'email': email,
             'amount': amount_kobo,
-            'reference': f"overtime_{booking_id}_{int(datetime.now().timestamp())}",
+            'reference': reference,
             'callback_url': f"{frontend_url}/payment/overtime-callback",
             'metadata': {
                 'booking_id': booking_id,
