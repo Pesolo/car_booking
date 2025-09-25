@@ -28,8 +28,9 @@ class PaymentService:
         # Get frontend URL with fallback
         frontend_url = getattr(Config, 'FRONTEND_URL', 'http://localhost:3000')
         
-        # Use the 10-digit booking_id directly for payment reference
-        unique_reference = f"booking_{booking_id}"
+        # Generate unique reference to avoid duplicates
+        timestamp = int(datetime.now().timestamp())
+        unique_reference = f"booking_{booking_id}_{timestamp}"
         
         payload = {
             'email': email,
@@ -64,7 +65,7 @@ class PaymentService:
             
             payment_data = response.json()['data']
             
-            # Store payment record - FIXED: Use datetime instead of datetime.datetime
+            # Store payment record
             payment_record = {
                 'booking_id': booking_id,
                 'reference': payload['reference'],
@@ -86,13 +87,49 @@ class PaymentService:
             raise Exception("Payment service unavailable")
     
     def handle_payment_callback(self, reference):
-        """Handle payment callback from Paystack"""
-        # Verify payment with Paystack
-        headers = {
-            'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}'
-        }
+        """Handle payment callback from Paystack with idempotency protection"""
+        logger.info(f"Processing payment callback for reference: {reference}")
+        
+        # FIRST: Check if we've already processed this payment
+        payment_record = self.payments_ref.child(reference).get()
+        if not payment_record:
+            logger.error(f"Payment record not found for reference: {reference}")
+            raise Exception("Payment record not found")
+        
+        # If already completed, return the existing result
+        if payment_record.get('status') == 'completed':
+            logger.info(f"Payment {reference} already processed, returning cached result")
+            booking_id = payment_record['booking_id']
+            booking = self.booking_service.get_booking_by_id(booking_id)
+            
+            return {
+                'message': 'Payment already processed',
+                'booking_id': booking_id,
+                'qr_data': booking.get('qr_data'),
+                'qr_image': booking.get('qr_image_base64'),
+                'already_processed': True
+            }
+        
+        # If currently being processed, prevent duplicate processing
+        if payment_record.get('status') == 'processing':
+            logger.info(f"Payment {reference} currently being processed")
+            return {
+                'message': 'Payment is being processed',
+                'status': 'processing'
+            }
+        
+        # Mark as processing to prevent concurrent processing
+        self.payments_ref.child(reference).update({
+            'status': 'processing',
+            'processing_started_at': datetime.utcnow().isoformat()
+        })
         
         try:
+            # Verify payment with Paystack
+            headers = {
+                'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}'
+            }
+            
             # Get Paystack base URL with fallback
             paystack_base_url = getattr(Config, 'PAYSTACK_BASE_URL', 'https://api.paystack.co')
             
@@ -103,68 +140,89 @@ class PaymentService:
             )
             
             if response.status_code != 200:
+                # Reset status on verification failure
+                self.payments_ref.child(reference).update({'status': 'pending'})
                 raise Exception("Payment verification failed")
             
             payment_data = response.json()['data']
             
             if payment_data['status'] != 'success':
+                # Reset status if payment wasn't successful
+                self.payments_ref.child(reference).update({
+                    'status': 'failed',
+                    'failure_reason': payment_data.get('gateway_response', 'Payment failed')
+                })
                 raise Exception("Payment was not successful")
             
-            # After successful payment verification, generate QR code with 10-digit booking ID
-            if payment_data['status'] == 'success':
-                # Get payment record
-                payment_record = self.payments_ref.child(reference).get()
-                if not payment_record:
-                    raise Exception("Payment record not found")
-                
-                booking_id = payment_record['booking_id']  # This is now a 10-digit ID
-                
-                # Get booking details for QR code
-                booking = self.booking_service.get_booking_by_id(booking_id)
-                
-                # Update payment status - FIXED: Use datetime instead of datetime.datetime
-                self.payments_ref.child(reference).update({
-                    'status': 'completed',
-                    'completed_at': datetime.utcnow().isoformat(),
-                    'paystack_data': payment_data
-                })
-                
-                # Generate QR code data with 10-digit booking ID
-                qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
-                
-                # Generate QR code image
-                booking_details = {
-                    'booking_reference': booking.get('booking_reference'),
-                    'slot_location': booking.get('slot_location'),
-                    'start_time': booking.get('start_time'),
-                    'end_time': booking.get('end_time'),
-                    'total_amount': booking.get('total_amount')
-                }
-                
-                qr_image = self.qr_service.generate_qr_code(qr_data, booking_details)
-                qr_base64 = self.qr_service.qr_to_base64(qr_image)
-                
-                # Update booking with QR data and image - FIXED: Use datetime instead of datetime.datetime
-                self.booking_service.update_booking_status(booking_id, 'confirmed', {
-                    'qr_data': qr_data,
-                    'qr_image_base64': qr_base64,
-                    'payment_reference': reference,
-                    'paid_at': datetime.utcnow().isoformat()
-                })
-                
-                logger.info(f"Payment completed for booking: {booking_id}")
-                
+            # Process successful payment
+            booking_id = payment_record['booking_id']
+            booking = self.booking_service.get_booking_by_id(booking_id)
+            
+            # Double-check booking status to prevent race conditions
+            if booking['status'] == 'confirmed':
+                logger.info(f"Booking {booking_id} already confirmed, returning existing QR")
                 return {
-                    'message': 'Payment successful',
+                    'message': 'Payment already processed',
                     'booking_id': booking_id,
-                    'qr_data': qr_data,
-                    'qr_image': qr_base64
+                    'qr_data': booking.get('qr_data'),
+                    'qr_image': booking.get('qr_image_base64'),
+                    'already_processed': True
                 }
             
-        except requests.RequestException as e:
-            logger.error(f"Payment verification network error: {str(e)}")
-            raise Exception("Payment verification failed")
-
+            # Generate QR code data and image
+            qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
+            
+            # Get slot information for QR code details
+            slots_ref = self.firebase.get_db_reference('slots')
+            slot = slots_ref.child(booking.get('slot_id')).get()
+            
+            booking_details = {
+                'booking_reference': booking.get('booking_reference'),
+                'slot_location': slot.get('location') if slot else 'Unknown Location',
+                'start_time': booking.get('start_time'),
+                'end_time': booking.get('end_time'),
+                'total_amount': booking.get('total_amount')
+            }
+            
+            qr_image = self.qr_service.generate_qr_code(qr_data, booking_details)
+            qr_base64 = self.qr_service.qr_to_base64(qr_image)
+            
+            # Update booking with QR data and image
+            self.booking_service.update_booking_status(booking_id, 'confirmed', {
+                'qr_data': qr_data,
+                'qr_image_base64': qr_base64,
+                'payment_reference': reference,
+                'paid_at': datetime.utcnow().isoformat(),
+                'slot_location': booking_details['slot_location']
+            })
+            
+            # Update payment status to completed
+            self.payments_ref.child(reference).update({
+                'status': 'completed',
+                'completed_at': datetime.utcnow().isoformat(),
+                'paystack_data': payment_data
+            })
+            
+            logger.info(f"Payment completed successfully for booking: {booking_id}")
+            
+            return {
+                'message': 'Payment successful',
+                'booking_id': booking_id,
+                'qr_data': qr_data,
+                'qr_image': qr_base64,
+                'booking_reference': booking.get('booking_reference')
+            }
+            
+        except Exception as e:
+            # Reset status on any error
+            self.payments_ref.child(reference).update({
+                'status': 'failed',
+                'error': str(e),
+                'failed_at': datetime.utcnow().isoformat()
+            })
+            logger.error(f"Payment processing failed for {reference}: {str(e)}")
+            raise
+    
     def verify_payment_status(self, reference):
         """Verify payment status by reference"""
         payment_record = self.payments_ref.child(reference).get()
@@ -215,9 +273,7 @@ class PaymentService:
         if not overtime_info['overtime_required']:
             raise ValueError('No overtime payment required')
         
-        # Use 10-digit booking ID for overtime payment reference
-        reference = f"overtime_{booking_id}"
-        
+        # Similar to initiate_payment but for overtime
         amount_kobo = int(overtime_info['amount'] * 100)
         
         # Get frontend URL with fallback
@@ -226,7 +282,7 @@ class PaymentService:
         payload = {
             'email': email,
             'amount': amount_kobo,
-            'reference': reference,
+            'reference': f"overtime_{booking_id}_{int(datetime.now().timestamp())}",
             'callback_url': f"{frontend_url}/payment/overtime-callback",
             'metadata': {
                 'booking_id': booking_id,
@@ -255,7 +311,7 @@ class PaymentService:
             
             payment_data = response.json()['data']
             
-            # Store overtime payment record - FIXED: Use datetime instead of datetime.datetime
+            # Store overtime payment record
             payment_record = {
                 'booking_id': booking_id,
                 'reference': payload['reference'],
