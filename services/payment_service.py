@@ -18,17 +18,12 @@ class PaymentService:
     
     def initiate_payment(self, booking_id, email):
         """Initiate payment with Paystack"""
-        # Get booking details
         booking = self.booking_service.get_booking_by_id(booking_id)
         if booking['status'] != 'pending':
             raise ValueError("Booking is not pending payment")
         
-        amount_kobo = int(booking['total_amount'] * 100)  # Convert to kobo
-        
-        # Get frontend URL with fallback
+        amount_kobo = int(booking['total_amount'] * 100)
         frontend_url = getattr(Config, 'FRONTEND_URL', 'http://localhost:3000')
-        
-        # Generate unique reference to avoid duplicates
         timestamp = int(datetime.now().timestamp())
         unique_reference = f"booking_{booking_id}_{timestamp}"
         
@@ -49,9 +44,7 @@ class PaymentService:
         }
         
         try:
-            # Get Paystack base URL with fallback
             paystack_base_url = getattr(Config, 'PAYSTACK_BASE_URL', 'https://api.paystack.co')
-            
             response = requests.post(
                 f'{paystack_base_url}/transaction/initialize',
                 json=payload,
@@ -65,7 +58,6 @@ class PaymentService:
             
             payment_data = response.json()['data']
             
-            # Store payment record
             payment_record = {
                 'booking_id': booking_id,
                 'reference': payload['reference'],
@@ -90,47 +82,31 @@ class PaymentService:
         """Handle payment callback from Paystack with idempotency protection"""
         logger.info(f"Processing payment callback for reference: {reference}")
         
-        # FIRST: Check if we've already processed this payment
         payment_record = self.payments_ref.child(reference).get()
         if not payment_record:
             logger.error(f"Payment record not found for reference: {reference}")
             raise Exception("Payment record not found")
         
-        # If already completed, return the existing result
         if payment_record.get('status') == 'completed':
-            logger.info(f"Payment {reference} already processed, returning cached result")
             booking_id = payment_record['booking_id']
             booking = self.booking_service.get_booking_by_id(booking_id)
-            
+            logger.info(f"Payment {reference} already completed")
             return {
+                'status': 'completed',
                 'message': 'Payment already processed',
                 'booking_id': booking_id,
                 'qr_data': booking.get('qr_data'),
                 'qr_image': booking.get('qr_image_base64'),
-                'already_processed': True
+                'booking_reference': booking.get('booking_reference')
             }
         
-        # If currently being processed, prevent duplicate processing
-        if payment_record.get('status') == 'processing':
-            logger.info(f"Payment {reference} currently being processed")
-            return {
-                'message': 'Payment is being processed',
-                'status': 'processing'
-            }
-        
-        # Mark as processing to prevent concurrent processing
         self.payments_ref.child(reference).update({
             'status': 'processing',
             'processing_started_at': datetime.utcnow().isoformat()
         })
         
         try:
-            # Verify payment with Paystack
-            headers = {
-                'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}'
-            }
-            
-            # Get Paystack base URL with fallback
+            headers = {'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}'}
             paystack_base_url = getattr(Config, 'PAYSTACK_BASE_URL', 'https://api.paystack.co')
             
             response = requests.get(
@@ -140,39 +116,27 @@ class PaymentService:
             )
             
             if response.status_code != 200:
-                # Reset status on verification failure
                 self.payments_ref.child(reference).update({'status': 'pending'})
+                logger.error(f"Paystack verify failed for {reference}: {response.text}")
                 raise Exception("Payment verification failed")
             
             payment_data = response.json()['data']
             
             if payment_data['status'] != 'success':
-                # Reset status if payment wasn't successful
                 self.payments_ref.child(reference).update({
                     'status': 'failed',
                     'failure_reason': payment_data.get('gateway_response', 'Payment failed')
                 })
-                raise Exception("Payment was not successful")
+                logger.warning(f"Payment {reference} failed: {payment_data.get('gateway_response')}")
+                return {
+                    'status': 'failed',
+                    'message': payment_data.get('gateway_response', 'Payment failed')
+                }
             
-            # Process successful payment
             booking_id = payment_record['booking_id']
             booking = self.booking_service.get_booking_by_id(booking_id)
             
-            # Double-check booking status to prevent race conditions
-            if booking['status'] == 'confirmed':
-                logger.info(f"Booking {booking_id} already confirmed, returning existing QR")
-                return {
-                    'message': 'Payment already processed',
-                    'booking_id': booking_id,
-                    'qr_data': booking.get('qr_data'),
-                    'qr_image': booking.get('qr_image_base64'),
-                    'already_processed': True
-                }
-            
-            # Generate QR code data and image
             qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
-            
-            # Get slot information for QR code details
             slots_ref = self.firebase.get_db_reference('slots')
             slot = slots_ref.child(booking.get('slot_id')).get()
             
@@ -187,7 +151,6 @@ class PaymentService:
             qr_image = self.qr_service.generate_qr_code(qr_data, booking_details)
             qr_base64 = self.qr_service.qr_to_base64(qr_image)
             
-            # Update booking with QR data and image
             self.booking_service.update_booking_status(booking_id, 'confirmed', {
                 'qr_data': qr_data,
                 'qr_image_base64': qr_base64,
@@ -196,16 +159,16 @@ class PaymentService:
                 'slot_location': booking_details['slot_location']
             })
             
-            # Update payment status to completed
             self.payments_ref.child(reference).update({
                 'status': 'completed',
                 'completed_at': datetime.utcnow().isoformat(),
                 'paystack_data': payment_data
             })
             
-            logger.info(f"Payment completed successfully for booking: {booking_id}")
+            logger.info(f"Payment {reference} completed for booking {booking_id}")
             
             return {
+                'status': 'completed',
                 'message': 'Payment successful',
                 'booking_id': booking_id,
                 'qr_data': qr_data,
@@ -214,7 +177,6 @@ class PaymentService:
             }
             
         except Exception as e:
-            # Reset status on any error
             self.payments_ref.child(reference).update({
                 'status': 'failed',
                 'error': str(e),
@@ -237,99 +199,3 @@ class PaymentService:
             'created_at': payment_record.get('created_at'),
             'completed_at': payment_record.get('completed_at')
         }
-    
-    def calculate_overtime_amount(self, booking_id):
-        """Calculate overtime amount for a booking"""
-        booking = self.booking_service.get_booking_by_id(booking_id)
-        
-        now = datetime.now()
-        end_time = datetime.fromisoformat(booking['end_time'])
-        
-        # Get grace period with fallback
-        grace_period_minutes = getattr(Config, 'GRACE_PERIOD_MINUTES', 15)
-        grace_period = datetime.timedelta(minutes=grace_period_minutes)
-        
-        if now <= end_time + grace_period:
-            return {'overtime_required': False, 'amount': 0}
-        
-        overtime_duration = now - end_time
-        overtime_hours = overtime_duration.total_seconds() / 3600
-        
-        # Get default parking rate with fallback
-        default_rate = getattr(Config, 'DEFAULT_PARKING_RATE', 100.0)
-        overtime_amount = round(overtime_hours * default_rate, 2)
-        
-        return {
-            'overtime_required': True,
-            'amount': overtime_amount,
-            'duration_hours': round(overtime_hours, 2),
-            'rate_per_hour': default_rate
-        }
-    
-    def process_overtime_payment(self, booking_id, email):
-        """Process overtime payment for a booking"""
-        overtime_info = self.calculate_overtime_amount(booking_id)
-        
-        if not overtime_info['overtime_required']:
-            raise ValueError('No overtime payment required')
-        
-        # Similar to initiate_payment but for overtime
-        amount_kobo = int(overtime_info['amount'] * 100)
-        
-        # Get frontend URL with fallback
-        frontend_url = getattr(Config, 'FRONTEND_URL', 'http://localhost:3000')
-        
-        payload = {
-            'email': email,
-            'amount': amount_kobo,
-            'reference': f"overtime_{booking_id}_{int(datetime.now().timestamp())}",
-            'callback_url': f"{frontend_url}/payment/overtime-callback",
-            'metadata': {
-                'booking_id': booking_id,
-                'type': 'overtime_payment'
-            }
-        }
-        
-        headers = {
-            'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}',
-            'Content-Type': 'application/json'
-        }
-        
-        try:
-            # Get Paystack base URL with fallback
-            paystack_base_url = getattr(Config, 'PAYSTACK_BASE_URL', 'https://api.paystack.co')
-            
-            response = requests.post(
-                f'{paystack_base_url}/transaction/initialize',
-                json=payload,
-                headers=headers,
-                timeout=30
-            )
-            
-            if response.status_code != 200:
-                raise Exception("Overtime payment initiation failed")
-            
-            payment_data = response.json()['data']
-            
-            # Store overtime payment record
-            payment_record = {
-                'booking_id': booking_id,
-                'reference': payload['reference'],
-                'amount': overtime_info['amount'],
-                'status': 'pending',
-                'type': 'overtime',
-                'paystack_reference': payment_data['reference'],
-                'created_at': datetime.utcnow().isoformat()
-            }
-            
-            self.payments_ref.child(payment_data['reference']).set(payment_record)
-            
-            return {
-                'authorization_url': payment_data['authorization_url'],
-                'reference': payment_data['reference'],
-                'overtime_amount': overtime_info['amount']
-            }
-            
-        except requests.RequestException as e:
-            logger.error(f"Overtime payment initiation error: {str(e)}")
-            raise Exception("Overtime payment service unavailable")
