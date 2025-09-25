@@ -1,4 +1,5 @@
-from datetime import datetime
+# services/payment_service.py
+from datetime import datetime, timedelta
 import requests
 from config import Config
 from services.booking_service import BookingService
@@ -79,36 +80,11 @@ class PaymentService:
             raise Exception("Payment service unavailable")
     
     def handle_payment_callback(self, reference):
-        """Handle payment callback from Paystack with idempotency protection"""
-        logger.info(f"Processing payment callback for reference: {reference}")
-        
-        payment_record = self.payments_ref.child(reference).get()
-        if not payment_record:
-            logger.error(f"Payment record not found for reference: {reference}")
-            raise Exception("Payment record not found")
-        
-        if payment_record.get('status') == 'completed':
-            booking_id = payment_record['booking_id']
-            booking = self.booking_service.get_booking_by_id(booking_id)
-            logger.info(f"Payment {reference} already completed")
-            return {
-                'status': 'completed',
-                'message': 'Payment already processed',
-                'booking_id': booking_id,
-                'qr_data': booking.get('qr_data'),
-                'qr_image': booking.get('qr_image_base64'),
-                'booking_reference': booking.get('booking_reference')
-            }
-        
-        self.payments_ref.child(reference).update({
-            'status': 'processing',
-            'processing_started_at': datetime.utcnow().isoformat()
-        })
+        """Verify and complete a payment using Paystack"""
+        headers = {'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}'}
+        paystack_base_url = getattr(Config, 'PAYSTACK_BASE_URL', 'https://api.paystack.co')
         
         try:
-            headers = {'Authorization': f'Bearer {Config.PAYSTACK_SECRET_KEY}'}
-            paystack_base_url = getattr(Config, 'PAYSTACK_BASE_URL', 'https://api.paystack.co')
-            
             response = requests.get(
                 f'{paystack_base_url}/transaction/verify/{reference}',
                 headers=headers,
@@ -116,33 +92,33 @@ class PaymentService:
             )
             
             if response.status_code != 200:
-                self.payments_ref.child(reference).update({'status': 'pending'})
-                logger.error(f"Paystack verify failed for {reference}: {response.text}")
                 raise Exception("Payment verification failed")
             
             payment_data = response.json()['data']
             
             if payment_data['status'] != 'success':
-                self.payments_ref.child(reference).update({
-                    'status': 'failed',
-                    'failure_reason': payment_data.get('gateway_response', 'Payment failed')
-                })
-                logger.warning(f"Payment {reference} failed: {payment_data.get('gateway_response')}")
-                return {
-                    'status': 'failed',
-                    'message': payment_data.get('gateway_response', 'Payment failed')
-                }
+                raise Exception("Payment was not successful")
+            
+            # Get payment record
+            payment_record = self.payments_ref.child(reference).get()
+            if not payment_record:
+                raise Exception("Payment record not found")
             
             booking_id = payment_record['booking_id']
             booking = self.booking_service.get_booking_by_id(booking_id)
             
-            qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
-            slots_ref = self.firebase.get_db_reference('slots')
-            slot = slots_ref.child(booking.get('slot_id')).get()
+            # Update payment
+            self.payments_ref.child(reference).update({
+                'status': 'completed',
+                'completed_at': datetime.utcnow().isoformat(),
+                'paystack_data': payment_data
+            })
             
+            # Generate QR
+            qr_data = f'PARKING:{booking_id}:{booking.get("user_id", "")}:{booking.get("slot_id", "")}'
             booking_details = {
                 'booking_reference': booking.get('booking_reference'),
-                'slot_location': slot.get('location') if slot else 'Unknown Location',
+                'slot_location': booking.get('slot_location'),
                 'start_time': booking.get('start_time'),
                 'end_time': booking.get('end_time'),
                 'total_amount': booking.get('total_amount')
@@ -155,17 +131,10 @@ class PaymentService:
                 'qr_data': qr_data,
                 'qr_image_base64': qr_base64,
                 'payment_reference': reference,
-                'paid_at': datetime.utcnow().isoformat(),
-                'slot_location': booking_details['slot_location']
+                'paid_at': datetime.utcnow().isoformat()
             })
             
-            self.payments_ref.child(reference).update({
-                'status': 'completed',
-                'completed_at': datetime.utcnow().isoformat(),
-                'paystack_data': payment_data
-            })
-            
-            logger.info(f"Payment {reference} completed for booking {booking_id}")
+            logger.info(f"Payment completed for booking: {booking_id}")
             
             return {
                 'status': 'completed',
@@ -176,24 +145,28 @@ class PaymentService:
                 'booking_reference': booking.get('booking_reference')
             }
             
-        except Exception as e:
-            self.payments_ref.child(reference).update({
-                'status': 'failed',
-                'error': str(e),
-                'failed_at': datetime.utcnow().isoformat()
-            })
-            logger.error(f"Payment processing failed for {reference}: {str(e)}")
-            raise
-    
-    def verify_payment_status(self, reference):
-        """Verify payment status by reference"""
+        except requests.RequestException as e:
+            logger.error(f"Payment verification network error: {str(e)}")
+            raise Exception("Payment verification failed")
+
+    def verify_payment_status(self, reference, auto_verify=False):
+        """Check Firebase payment record, optionally re-verify with Paystack if pending"""
         payment_record = self.payments_ref.child(reference).get()
         if not payment_record:
             raise ValueError('Payment record not found')
         
+        status = payment_record.get('status')
+        
+        # Auto-check Paystack if still pending
+        if auto_verify and status in ['pending', 'processing']:
+            try:
+                return self.handle_payment_callback(reference)
+            except Exception as e:
+                logger.warning(f"Auto verification for {reference} failed: {str(e)}")
+        
         return {
             'reference': reference,
-            'status': payment_record.get('status'),
+            'status': status,
             'amount': payment_record.get('amount'),
             'booking_id': payment_record.get('booking_id'),
             'created_at': payment_record.get('created_at'),

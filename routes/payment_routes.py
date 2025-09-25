@@ -1,6 +1,7 @@
+# routes/payment_routes.py
 from flask import Blueprint, request, jsonify
 from services.payment_service import PaymentService
-from services.auth_service import AuthService
+from services.booking_service import BookingService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,6 @@ def initiate_payment():
         
         payment_service = PaymentService()
         result = payment_service.initiate_payment(booking_id, email)
-        
         return jsonify(result), 200
         
     except ValueError as e:
@@ -41,44 +41,22 @@ def payment_callback():
         if not reference:
             return jsonify({'error': 'Payment reference is required'}), 400
         
-        # Log the callback attempt
-        logger.info(f"Payment callback received for reference: {reference}")
-        
         payment_service = PaymentService()
         result = payment_service.handle_payment_callback(reference)
-        
-        # Add a success flag to help frontend handle the response
-        result['success'] = True
-        
-        # Log successful processing
-        if result.get('already_processed'):
-            logger.info(f"Payment callback for {reference} - already processed")
-        else:
-            logger.info(f"Payment callback for {reference} - successfully processed")
-        
         return jsonify(result), 200
         
     except ValueError as e:
-        logger.warning(f"Payment callback validation error: {str(e)}")
-        return jsonify({
-            'error': str(e),
-            'success': False
-        }), 400
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Payment callback error: {str(e)}")
-        return jsonify({
-            'error': 'Payment processing failed',
-            'success': False
-        }), 500
+        return jsonify({'error': 'Payment processing failed'}), 500
 
 @payment_bp.route('/verify/<reference>', methods=['GET'])
 def verify_payment(reference):
     try:
         payment_service = PaymentService()
         result = payment_service.verify_payment_status(reference)
-        
         return jsonify(result), 200
-        
     except ValueError as e:
         return jsonify({'error': str(e)}), 404
     except Exception as e:
@@ -87,14 +65,12 @@ def verify_payment(reference):
 
 @payment_bp.route('/status/<reference>', methods=['GET'])
 def get_payment_status(reference):
-    """Get detailed payment status including booking information"""
+    """Detailed payment status including booking info + auto-verify with Paystack"""
     try:
         payment_service = PaymentService()
-        result = payment_service.verify_payment_status(reference)
-        
-        # If payment is completed, also get booking details
-        if result['status'] == 'completed':
-            from services.booking_service import BookingService
+        result = payment_service.verify_payment_status(reference, auto_verify=True)
+
+        if result.get('status') == 'completed':
             booking_service = BookingService()
             booking = booking_service.get_booking_by_id(result['booking_id'])
             result['booking_details'] = {
@@ -105,9 +81,8 @@ def get_payment_status(reference):
                 'qr_data': booking.get('qr_data'),
                 'status': booking.get('status')
             }
-        
+
         return jsonify(result), 200
-        
     except ValueError as e:
         return jsonify({'error': str(e)}), 404
     except Exception as e:
