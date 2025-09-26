@@ -1,102 +1,135 @@
-# routes/payment_routes.py
 from flask import Blueprint, request, jsonify
 from services.payment_service import PaymentService
-from services.booking_service import BookingService
+from services.auth_service import AuthService
 import logging
 
 logger = logging.getLogger(__name__)
-payment_bp = Blueprint("payment", __name__)
+payment_bp = Blueprint('payment', __name__)
 
-@payment_bp.route("/initiate", methods=["POST"])
+@payment_bp.route('/initiate', methods=['POST'])
 def initiate_payment():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"error": "Request body is required"}), 400
-
-        booking_id = data.get("booking_id")
-        email = data.get("email")
-
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        booking_id = data.get('booking_id')
+        email = data.get('email')
+        
         if not all([booking_id, email]):
-            return jsonify({"error": "booking_id and email are required"}), 400
-
+            return jsonify({'error': 'booking_id and email are required'}), 400
+        
         payment_service = PaymentService()
-        result = payment_service.initiate_payment(booking_id, email)
+        result = payment_service.process_overtime_payment(booking_id, email)
+        
         return jsonify(result), 200
-
+        
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Overtime payment initiation error: {str(e)}")
+        return jsonify({'error': 'Overtime payment initiation failed'}), 500service.initiate_payment(booking_id, email)
+        
+        return jsonify(result), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Payment initiation error: {str(e)}")
-        return jsonify({"error": "Payment initiation failed"}), 500
+        return jsonify({'error': 'Payment initiation failed'}), 500
 
-
-@payment_bp.route("/callback", methods=["POST"])
+@payment_bp.route('/callback', methods=['POST'])
 def payment_callback():
-    """Webhook/callback from Paystack → verify & update booking"""
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"error": "Request body is required"}), 400
-
-        reference = data.get("reference")
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        reference = data.get('reference')
         if not reference:
-            return jsonify({"error": "Payment reference is required"}), 400
-
+            return jsonify({'error': 'Payment reference is required'}), 400
+        
         payment_service = PaymentService()
         result = payment_service.handle_payment_callback(reference)
+        
         return jsonify(result), 200
-
+        
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         logger.error(f"Payment callback error: {str(e)}")
-        return jsonify({"error": "Payment processing failed"}), 500
+        return jsonify({'error': 'Payment processing failed'}), 500
 
-
-@payment_bp.route("/verify/<reference>", methods=["GET"])
+@payment_bp.route('/verify/<reference>', methods=['GET'])
 def verify_payment(reference):
-    """Manual verification endpoint"""
+    """Get current payment status"""
     try:
         payment_service = PaymentService()
-        result = payment_service.verify_payment_status(reference, auto_verify=True)
+        result = payment_service.verify_payment_status(reference)
+        
         return jsonify(result), 200
+        
     except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        return jsonify({'error': str(e)}), 404
     except Exception as e:
         logger.error(f"Payment verification error: {str(e)}")
-        return jsonify({"error": "Payment verification failed"}), 500
+        return jsonify({'error': 'Payment verification failed'}), 500
 
-
-@payment_bp.route("/status/<reference>", methods=["GET"])
+# Additional endpoint for the frontend status polling
+@payment_bp.route('/status/<reference>', methods=['GET'])
 def get_payment_status(reference):
     """
-    Frontend polling endpoint:
-    - Always auto-verifies with Paystack if pending
-    - Returns booking + QR info when successful
+    Frontend polling endpoint - same as verify but with better error handling
     """
     try:
         payment_service = PaymentService()
-        result = payment_service.verify_payment_status(reference, auto_verify=True)
-
-        if result.get("status") == "completed":
-            booking_service = BookingService()
-            booking = booking_service.get_booking_by_id(result["booking_id"])
-
-            result["booking_details"] = {
-                "booking_reference": booking.get("booking_reference"),
-                "slot_location": booking.get("slot_location", "Unknown"),
-                "start_time": booking.get("start_time"),
-                "end_time": booking.get("end_time"),
-                "qr_data": booking.get("qr_data"),
-                "qr_image_base64": booking.get("qr_image_base64"),
-                "status": booking.get("status"),
-            }
-
+        result = payment_service.verify_payment_status(reference)
+        
+        # Enhanced logging for debugging
+        logger.info(f"Payment status check for {reference}: {result.get('status')}")
+        
         return jsonify(result), 200
-
+        
     except ValueError as e:
-        return jsonify({"error": str(e)}), 404
+        logger.error(f"Payment status validation error for {reference}: {str(e)}")
+        return jsonify({'error': str(e), 'status': 'not_found'}), 404
     except Exception as e:
-        logger.error(f"Payment status check error: {str(e)}")
-        return jsonify({"error": "Failed to get payment status"}), 500
+        logger.error(f"Payment status check error for {reference}: {str(e)}")
+        return jsonify({
+            'error': 'Failed to get payment status', 
+            'status': 'error',
+            'reference': reference
+        }), 500
+
+# Add overtime endpoints from your working code
+@payment_bp.route('/overtime/calculate/<booking_id>', methods=['GET'])
+def calculate_overtime(booking_id):
+    """Calculate overtime amount for a booking"""
+    try:
+        payment_service = PaymentService()
+        result = payment_service.calculate_overtime_amount(booking_id)
+        
+        return jsonify(result), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except Exception as e:
+        logger.error(f"Overtime calculation error: {str(e)}")
+        return jsonify({'error': 'Failed to calculate overtime'}), 500
+
+@payment_bp.route('/overtime/initiate', methods=['POST'])
+def initiate_overtime_payment():
+    """Initiate overtime payment"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        booking_id = data.get('booking_id')
+        email = data.get('email')
+        
+        if not all([booking_id, email]):
+            return jsonify({'error': 'booking_id and email are required'}), 400
+        
+        payment_service = PaymentService()
+        result = payment_
